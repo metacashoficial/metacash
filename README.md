@@ -104,28 +104,21 @@ Gmail limita los envíos diarios, así que para muchos usuarios conviene un serv
 
 Después, en **Authentication › Rate Limits** puedes subir el límite de correos por hora.
 
-### D. (Opcional) Plantillas en español
-En **Authentication › Emails › Templates** puedes traducir los mensajes. Mantén siempre la variable `{{ .ConfirmationURL }}` en el enlace. Ejemplo para **Reset Password**:
+### D. Plantillas con código de 6 dígitos (necesario)
+MetaCash confirma cuentas y recupera contraseñas con un **código de 6 dígitos** que la persona escribe en la app (no con un link). Para eso los correos deben mostrar `{{ .Token }}`:
 
-```html
-<h2>Restablece tu contraseña</h2>
-<p>Recibimos una solicitud para cambiar la contraseña de tu cuenta de MetaCash.</p>
-<p><a href="{{ .ConfirmationURL }}">Crear nueva contraseña</a></p>
-<p>Si no fuiste tú, ignora este correo.</p>
-```
-
-Y para **Confirm signup**:
-
-```html
-<h2>Confirma tu cuenta</h2>
-<p>Gracias por registrarte en MetaCash. Confirma tu correo para empezar:</p>
-<p><a href="{{ .ConfirmationURL }}">Confirmar mi correo</a></p>
-```
+1. **Authentication › Emails › Templates › Confirm signup**
+   - Subject: `Tu código para MetaCash`
+   - Body: pega el contenido de `supabase/plantillas-correo/confirmar-registro.html`
+2. **Authentication › Emails › Templates › Reset Password**
+   - Subject: `Código para recuperar tu contraseña`
+   - Body: pega el contenido de `supabase/plantillas-correo/recuperar-contrasena.html`
+3. En **Authentication › Sign In / Providers › Email** deja **Email OTP Length** en `6` (si lo cambias, pon el mismo número en `VITE_OTP_LENGTH`).
 
 ### Cómo funciona cada flujo en la app
-- **Registro**: nombre (opcional), correo y contraseña. Si *Confirm email* está activo, aparece la pantalla «Revisa tu correo» con un botón para reenviar el enlace. Al abrirlo, el usuario entra directamente.
-- **Inicio de sesión**: correo y contraseña. Los errores aparecen en español (contraseña incorrecta, correo sin confirmar con opción de reenviar, demasiados intentos…).
-- **Recuperar contraseña**: «¿Olvidaste tu contraseña?» › se envía el correo › el enlace abre MetaCash en la pantalla «Crea una nueva contraseña». Si el enlace expiró, la app lo indica y ofrece pedir otro.
+- **Registro**: nombre (opcional), correo y contraseña › llega un código de 6 dígitos › se escribe en la app y entra directo. Se puede reenviar el código cada 60 segundos.
+- **Inicio de sesión**: correo y contraseña. Si la cuenta no se confirmó, la app manda un código nuevo y muestra dónde escribirlo.
+- **Recuperar contraseña**: «¿Olvidaste tu contraseña?» › correo › llega un código › se escribe junto con la contraseña nueva y entra directo.
 - **Cerrar sesión**: en Ajustes (o en la barra lateral). También hay «Cerrar sesión en todos los dispositivos».
 - **Sesión persistente**: la sesión se guarda en el dispositivo y el token se renueva solo, así que no tienes que entrar cada vez.
 
