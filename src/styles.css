@@ -977,3 +977,13 @@ input[type='time']::-webkit-calendar-picker-indicator { opacity: 0.55; cursor: p
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
 }
+
+/* ------------------------------ Código por correo ------------------------------ */
+.code-input { height: 60px; text-align: center; font-size: 28px; font-weight: 800; letter-spacing: 0.4em; font-variant-numeric: tabular-nums; padding-left: calc(14px + 0.4em); }
+.code-input::placeholder { letter-spacing: 0.4em; color: var(--border-strong); }
+.auth-back { display: inline-flex; align-items: center; gap: 4px; margin: 0 0 18px -6px; padding: 6px 8px; border: 0; border-radius: 10px; background: none; color: var(--muted); font-weight: 650; cursor: pointer; }
+.auth-back:hover { background: var(--surface-2); color: var(--text); }
+.auth-head .sent-icon { margin-bottom: 14px; }
+.break { word-break: break-all; color: var(--text); }
+.resend { text-align: center; font-size: 13px; color: var(--muted); }
+.resend .link { font-size: 13px; }

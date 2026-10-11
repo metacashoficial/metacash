@@ -8,14 +8,15 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true)
   const [recovery, setRecovery] = useState(arrivedFrom.recovery)
   const [linkError, setLinkError] = useState(arrivedFrom.error)
-  const [justConfirmed, setJustConfirmed] = useState(false)
+  const [notice, setNotice] = useState(null) // mensaje de bienvenida al entrar
+  const [hold, setHoldState] = useState(false) // mantiene la pantalla de acceso mientras se termina un flujo
 
   useEffect(() => {
     let mounted = true
     supabase.auth.getSession().then(({ data }) => {
       if (!mounted) return
       setSession(data.session)
-      if (data.session && arrivedFrom.signup) setJustConfirmed(true)
+      if (data.session && arrivedFrom.signup) setNotice('Tu correo quedó confirmado. ¡Bienvenido a MetaCash!')
       setLoading(false)
     })
 
@@ -70,6 +71,24 @@ export function AuthProvider({ children }) {
     if (error) throw error
   }, [])
 
+  /** Confirma la cuenta con el código de 6 dígitos que llegó al correo. */
+  const verifySignupCode = useCallback(async (email, token) => {
+    const { error } = await supabase.auth.verifyOtp({ email: email.trim().toLowerCase(), token: String(token).trim(), type: 'email' })
+    if (error) throw error
+    setNotice('Tu correo quedó confirmado. ¡Bienvenido a MetaCash!')
+  }, [])
+
+  /** Valida el código de recuperación; deja la sesión abierta para guardar la contraseña nueva. */
+  const verifyRecoveryCode = useCallback(async (email, token) => {
+    const { error } = await supabase.auth.verifyOtp({ email: email.trim().toLowerCase(), token: String(token).trim(), type: 'recovery' })
+    if (error) throw error
+  }, [])
+
+  const setHold = useCallback((value, message) => {
+    setHoldState(value)
+    if (message) setNotice(message)
+  }, [])
+
   const updatePassword = useCallback(async (password) => {
     const { error } = await supabase.auth.updateUser({ password })
     if (error) throw error
@@ -91,8 +110,12 @@ export function AuthProvider({ children }) {
         setRecovery,
         linkError,
         clearLinkError: () => setLinkError(null),
-        justConfirmed,
-        clearJustConfirmed: () => setJustConfirmed(false),
+        notice,
+        clearNotice: () => setNotice(null),
+        hold,
+        setHold,
+        verifySignupCode,
+        verifyRecoveryCode,
         signIn,
         signUp,
         resendConfirmation,

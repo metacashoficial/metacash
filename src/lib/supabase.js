@@ -45,8 +45,9 @@ export function emailDomainAllowed(email) {
 
 export function authErrorMessage(error) {
   const m = String(error?.message || error || '').toLowerCase()
+  if (m.includes('token') && (m.includes('expired') || m.includes('invalid'))) return 'El código es incorrecto o ya expiró. Revísalo o pide uno nuevo.'
   if (m.includes('invalid login')) return 'Correo o contraseña incorrectos.'
-  if (m.includes('email not confirmed')) return 'Tu correo aún no está confirmado. Abre el enlace que te enviamos (revisa también spam).'
+  if (m.includes('email not confirmed')) return 'Tu correo aún no está confirmado. Escribe el código que te enviamos (revisa también spam).'
   if (m.includes('already registered') || m.includes('already been registered') || m.includes('already exists'))
     return 'Ya existe una cuenta con este correo. Inicia sesión o recupera tu contraseña.'
   if (m.includes('password should') || m.includes('weak password') || m.includes('weak_password'))
@@ -60,7 +61,7 @@ export function authErrorMessage(error) {
   if (m.includes('error sending') || m.includes('smtp'))
     return 'No se pudo enviar el correo. Revisa la configuración de correo (SMTP) en Supabase.'
   if (m.includes('reauthentication')) return 'Por seguridad, cierra sesión e inicia de nuevo antes de cambiar la contraseña.'
-  if (m.includes('expired') || m.includes('otp_expired')) return 'El enlace expiró o ya fue usado. Solicita uno nuevo.'
+  if (m.includes('expired') || m.includes('otp_expired')) return 'El código o enlace expiró o ya fue usado. Pide uno nuevo.'
   if (m.includes('failed to fetch') || m.includes('network')) return 'No se pudo conectar. Revisa tu conexión a internet.'
   if (m.includes('database error saving new user') || m.includes('solo se permiten'))
     return 'No se pudo crear la cuenta con este correo.'

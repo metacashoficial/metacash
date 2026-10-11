@@ -111,8 +111,9 @@ function Splash() {
 }
 
 function Root({ theme, setTheme }) {
-  const { session, loading, recovery } = useAuth()
+  const { session, loading, recovery, hold } = useAuth()
   if (loading) return <Splash />
+  if (hold) return <AuthScreen />
   if (recovery && session) return <ResetPassword />
   if (!session) return <AuthScreen />
   return (
@@ -124,7 +125,7 @@ function Root({ theme, setTheme }) {
 
 function Shell({ theme, setTheme }) {
   const { loading, error, prefs, reminders, schedules, deleteTransaction, reloadAll, savePrefs, user } = useData()
-  const { signOut, justConfirmed, clearJustConfirmed } = useAuth()
+  const { signOut, notice, clearNotice } = useAuth()
   const { toast, confirm } = useFeedback()
   const [page, go] = usePage()
   const [txForm, setTxForm] = useState({ open: false })
@@ -136,11 +137,11 @@ function Shell({ theme, setTheme }) {
   }, [prefs?.theme, prefs?.updated_at, setTheme])
 
   useEffect(() => {
-    if (justConfirmed) {
-      toast('Tu correo quedó confirmado. ¡Bienvenido a MetaCash!', { title: 'Cuenta activada' })
-      clearJustConfirmed()
+    if (notice) {
+      toast(notice)
+      clearNotice()
     }
-  }, [justConfirmed, toast, clearJustConfirmed])
+  }, [notice, toast, clearNotice])
 
   useReminderScheduler({
     reminders,

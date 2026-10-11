@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import Icon, { Logo, Wordmark } from '../components/Icon'
 import { Button, Input } from '../components/ui'
 import { useAuth } from '../context/AuthContext'
@@ -76,72 +76,106 @@ function AuthLayout({ children }) {
   )
 }
 
+const CODE_LEN = Math.max(6, Math.min(10, Number(import.meta.env.VITE_OTP_LENGTH) || 6))
+const RESEND_SECONDS = 60
+
+function CodeInput({ value, onChange, error, onComplete }) {
+  return (
+    <div className={`field ${error ? 'has-error' : ''}`}>
+      <label className="field-label" htmlFor="otp-code">
+        Código de {CODE_LEN} dígitos
+      </label>
+      <input
+        id="otp-code"
+        className="input code-input"
+        inputMode="numeric"
+        autoComplete="one-time-code"
+        maxLength={10}
+        placeholder={'0'.repeat(CODE_LEN)}
+        value={value}
+        onChange={(e) => {
+          const v = e.target.value.replace(/\D/g, '').slice(0, 10)
+          onChange(v)
+          if (v.length === CODE_LEN) onComplete?.(v)
+        }}
+        data-autofocus
+        autoFocus
+      />
+      {error && <p className="field-error">{error}</p>}
+    </div>
+  )
+}
+
+function useCooldown() {
+  const [left, setLeft] = useState(0)
+  useEffect(() => {
+    if (left <= 0) return
+    const t = setTimeout(() => setLeft((l) => l - 1), 1000)
+    return () => clearTimeout(t)
+  }, [left])
+  return [left, () => setLeft(RESEND_SECONDS)]
+}
+
 export default function AuthScreen() {
-  const { signIn, signUp, requestPasswordReset, resendConfirmation, linkError, clearLinkError } = useAuth()
-  const [mode, setMode] = useState('login') // login | register | forgot | sent | confirm
+  const {
+    signIn,
+    signUp,
+    resendConfirmation,
+    verifySignupCode,
+    requestPasswordReset,
+    verifyRecoveryCode,
+    updatePassword,
+    setHold,
+    signOut,
+    linkError,
+    clearLinkError,
+  } = useAuth()
+  // login | register | verify (código de registro) | forgot (pide correo) | reset (código + contraseña nueva)
+  const [mode, setMode] = useState('login')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [password2, setPassword2] = useState('')
   const [name, setName] = useState('')
+  const [code, setCode] = useState('')
+  const [codeVerified, setCodeVerified] = useState(false)
   const [errors, setErrors] = useState({})
   const [message, setMessage] = useState(null)
   const [loading, setLoading] = useState(false)
+  const [cooldown, startCooldown] = useCooldown()
 
   const go = (m) => {
     setMode(m)
     setErrors({})
     setMessage(null)
+    setCode('')
+    setCodeVerified(false)
+    if (m === 'login' || m === 'register') {
+      setPassword('')
+      setPassword2('')
+    }
     clearLinkError()
   }
 
   const placeholder = allowedDomains.length ? `usuario@${allowedDomains[0]}` : 'tucorreo@gmail.com'
+  const cleanEmail = email.trim().toLowerCase()
 
   const validateEmail = () => {
-    const e = email.trim()
-    if (!EMAIL_RE.test(e)) return 'Escribe un correo válido.'
-    if (mode === 'register' && !emailDomainAllowed(e)) return `Usa un correo ${allowedDomains.map((d) => '@' + d).join(' o ')}.`
+    if (!EMAIL_RE.test(cleanEmail)) return 'Escribe un correo válido.'
+    if (mode === 'register' && !emailDomainAllowed(cleanEmail)) return `Usa un correo ${allowedDomains.map((d) => '@' + d).join(' o ')}.`
     return null
   }
 
-  const submit = async (ev) => {
-    ev.preventDefault()
-    const errs = {}
-    const em = validateEmail()
-    if (em) errs.email = em
-    if (mode === 'login' && !password) errs.password = 'Escribe tu contraseña.'
-    if (mode === 'register') {
-      if (password.length < 8) errs.password = 'Usa al menos 8 caracteres.'
-      else if (!/[A-Za-z]/.test(password) || !/\d/.test(password)) errs.password = 'Combina letras y números.'
-      if (password2 !== password) errs.password2 = 'Las contraseñas no coinciden.'
-    }
-    setErrors(errs)
-    setMessage(null)
-    if (Object.keys(errs).length) return
-    setLoading(true)
-    try {
-      if (mode === 'login') await signIn(email, password)
-      if (mode === 'register') {
-        const { needsConfirmation } = await signUp(email, password, name)
-        if (needsConfirmation) go('confirm')
-      }
-      if (mode === 'forgot') {
-        await requestPasswordReset(email)
-        go('sent')
-      }
-    } catch (err) {
-      const msg = authErrorMessage(err)
-      if (mode === 'login' && /no está confirmado/.test(msg)) setMessage({ tone: 'info', text: msg, resend: true })
-      else setMessage({ tone: 'error', text: msg })
-    } finally {
-      setLoading(false)
-    }
+  const validateNewPassword = (errs) => {
+    if (password.length < 8) errs.password = 'Usa al menos 8 caracteres.'
+    else if (!/[A-Za-z]/.test(password) || !/\d/.test(password)) errs.password = 'Combina letras y números.'
+    if (password2 !== password) errs.password2 = 'Las contraseñas no coinciden.'
   }
 
-  const resend = async () => {
+  const run = async (fn) => {
     setLoading(true)
+    setMessage(null)
     try {
-      await resendConfirmation(email)
-      setMessage({ tone: 'success', text: 'Te enviamos un nuevo correo de confirmación.' })
+      await fn()
     } catch (err) {
       setMessage({ tone: 'error', text: authErrorMessage(err) })
     } finally {
@@ -149,38 +183,206 @@ export default function AuthScreen() {
     }
   }
 
-  if (mode === 'sent' || mode === 'confirm') {
+  /* ----- Iniciar sesión / crear cuenta / pedir código de recuperación ----- */
+  const submit = (ev) => {
+    ev.preventDefault()
+    const errs = {}
+    const em = validateEmail()
+    if (em) errs.email = em
+    if (mode === 'login' && !password) errs.password = 'Escribe tu contraseña.'
+    if (mode === 'register') validateNewPassword(errs)
+    setErrors(errs)
+    setMessage(null)
+    if (Object.keys(errs).length) return
+
+    if (mode === 'login')
+      return run(async () => {
+        try {
+          await signIn(cleanEmail, password)
+        } catch (err) {
+          // Cuenta creada pero sin confirmar: le mandamos un código nuevo
+          if (/email not confirmed/i.test(err?.message || '')) {
+            await resendConfirmation(cleanEmail).catch(() => {})
+            startCooldown()
+            setMode('verify')
+            setCode('')
+            setMessage({ tone: 'info', text: 'Tu correo aún no está confirmado. Te enviamos un código para confirmarlo.' })
+            return
+          }
+          throw err
+        }
+      })
+
+    if (mode === 'register')
+      return run(async () => {
+        const { needsConfirmation } = await signUp(cleanEmail, password, name)
+        if (needsConfirmation) {
+          startCooldown()
+          setMode('verify')
+          setCode('')
+        }
+      })
+
+    if (mode === 'forgot')
+      return run(async () => {
+        await requestPasswordReset(cleanEmail)
+        startCooldown()
+        setMode('reset')
+        setCode('')
+        setPassword('')
+        setPassword2('')
+      })
+  }
+
+  /* ----- Confirmar registro con el código ----- */
+  const confirmSignup = (value = code) => {
+    if (value.length < 6) return setErrors({ code: `Escribe el código de ${CODE_LEN} dígitos.` })
+    setErrors({})
+    return run(() => verifySignupCode(cleanEmail, value)) // al confirmar, la app entra sola
+  }
+
+  /* ----- Recuperar: código + contraseña nueva ----- */
+  const confirmReset = (ev) => {
+    ev?.preventDefault()
+    const errs = {}
+    if (!codeVerified && code.length < 6) errs.code = `Escribe el código de ${CODE_LEN} dígitos.`
+    validateNewPassword(errs)
+    setErrors(errs)
+    if (Object.keys(errs).length) return
+    return run(async () => {
+      setHold(true) // que la app no entre sola antes de guardar la contraseña
+      try {
+        if (!codeVerified) {
+          await verifyRecoveryCode(cleanEmail, code)
+          setCodeVerified(true) // el código ya se usó: si falla la contraseña no se vuelve a pedir
+        }
+        await updatePassword(password)
+        setHold(false, 'Contraseña actualizada. ¡Bienvenido de vuelta!')
+      } catch (err) {
+        if (!codeVerified) setHold(false)
+        throw err
+      }
+    })
+  }
+
+  const cancelReset = async () => {
+    if (codeVerified) await signOut('local').catch(() => {})
+    setHold(false)
+    go('login')
+  }
+
+  const resend = () => {
+    if (cooldown > 0) return
+    return run(async () => {
+      if (mode === 'verify') await resendConfirmation(cleanEmail)
+      else await requestPasswordReset(cleanEmail)
+      startCooldown()
+      setCode('')
+      setMessage({ tone: 'success', text: 'Te enviamos un código nuevo.' })
+    })
+  }
+
+  const resendLine = (
+    <p className="resend">
+      ¿No te llegó? Revisa <b>Spam</b> y <b>Promociones</b>.{' '}
+      {cooldown > 0 ? (
+        <span className="muted">Reenviar en {cooldown} s</span>
+      ) : (
+        <button type="button" className="link" onClick={resend} disabled={loading}>
+          Reenviar código
+        </button>
+      )}
+    </p>
+  )
+
+  const alerts = (
+    <>
+      {linkError && (
+        <div className="alert alert-error">
+          {authErrorMessage({ message: linkError })}{' '}
+          <button type="button" className="link" onClick={() => go('forgot')}>
+            Pedir un código
+          </button>
+        </div>
+      )}
+      {message && <div className={`alert alert-${message.tone}`}>{message.text}</div>}
+    </>
+  )
+
+  /* ------------------------- Pantalla: código de registro ------------------------- */
+  if (mode === 'verify') {
     return (
       <AuthLayout>
-        <div className="auth-sent">
+        <button type="button" className="auth-back" onClick={() => go('register')}>
+          <Icon name="chevronLeft" size={18} /> Regresar
+        </button>
+        <header className="auth-head">
           <span className="sent-icon">
-            <Icon name="mail" size={26} />
+            <Icon name="mail" size={24} />
           </span>
           <h1>Revisa tu correo</h1>
           <p>
-            {mode === 'sent' ? 'Si existe una cuenta con ' : 'Te enviamos un enlace de confirmación a '}
-            <strong>{email.trim().toLowerCase()}</strong>
-            {mode === 'sent' ? ', te llegará un enlace para crear una nueva contraseña.' : '. Ábrelo para activar tu cuenta.'}
+            Te enviamos un código de {CODE_LEN} dígitos a <strong className="break">{cleanEmail}</strong>. Escríbelo aquí para activar tu cuenta.
           </p>
-          <p className="muted small">¿No lo ves? Revisa las carpetas de spam y promociones. Puede tardar un par de minutos.</p>
-          {message && <div className={`alert alert-${message.tone}`}>{message.text}</div>}
-          {mode === 'confirm' && (
-            <Button variant="secondary" block loading={loading} onClick={resend} icon="sync">
-              Reenviar correo
-            </Button>
-          )}
-          <Button variant="ghost" block onClick={() => go('login')} icon="chevronLeft">
-            Volver a iniciar sesión
+        </header>
+        {alerts}
+        <form
+          className="form-grid"
+          onSubmit={(e) => {
+            e.preventDefault()
+            confirmSignup()
+          }}
+          noValidate
+        >
+          <CodeInput value={code} onChange={setCode} error={errors.code} onComplete={(v) => !loading && confirmSignup(v)} />
+          <Button type="submit" size="lg" block loading={loading} disabled={code.length < 6}>
+            Confirmar y entrar
           </Button>
-        </div>
+          {resendLine}
+        </form>
       </AuthLayout>
     )
   }
 
+  /* ------------------- Pantalla: código + contraseña nueva ------------------- */
+  if (mode === 'reset') {
+    return (
+      <AuthLayout>
+        <button type="button" className="auth-back" onClick={cancelReset}>
+          <Icon name="chevronLeft" size={18} /> Regresar
+        </button>
+        <header className="auth-head">
+          <span className="sent-icon">
+            <Icon name="lock" size={24} />
+          </span>
+          <h1>Crea tu nueva contraseña</h1>
+          <p>
+            Escribe el código que enviamos a <strong className="break">{cleanEmail}</strong> y elige una contraseña nueva.
+          </p>
+        </header>
+        {alerts}
+        <form className="form-grid" onSubmit={confirmReset} noValidate>
+          {codeVerified ? (
+            <div className="alert alert-success">Código verificado. Solo falta guardar tu contraseña.</div>
+          ) : (
+            <CodeInput value={code} onChange={setCode} error={errors.code} />
+          )}
+          <PasswordInput label="Contraseña nueva" value={password} onChange={setPassword} error={errors.password} autoComplete="new-password" />
+          <PasswordInput label="Repite la contraseña" value={password2} onChange={setPassword2} error={errors.password2} autoComplete="new-password" />
+          <Button type="submit" size="lg" block loading={loading}>
+            Cambiar contraseña
+          </Button>
+          {!codeVerified && resendLine}
+        </form>
+      </AuthLayout>
+    )
+  }
+
+  /* ------------------- Pantallas: entrar / crear cuenta / olvidé ------------------- */
   const titles = {
     login: ['Inicia sesión', 'Qué bueno verte de nuevo.'],
-    register: ['Crea tu cuenta', 'Gratis. Solo necesitas tu correo.'],
-    forgot: ['Recupera tu contraseña', 'Te enviaremos un enlace para crear una nueva.'],
+    register: ['Crea tu cuenta', 'Gratis. Te enviaremos un código para confirmar tu correo.'],
+    forgot: ['Recupera tu contraseña', 'Te enviaremos un código a tu correo para crear una nueva.'],
   }
   const s = strength(password)
 
@@ -202,28 +404,7 @@ export default function AuthScreen() {
         </div>
       )}
 
-      {linkError && (
-        <div className="alert alert-error">
-          {authErrorMessage({ message: linkError })}
-          {' '}
-          <button type="button" className="link" onClick={() => go('forgot')}>
-            Pedir otro enlace
-          </button>
-        </div>
-      )}
-      {message && (
-        <div className={`alert alert-${message.tone}`}>
-          {message.text}
-          {message.resend && (
-            <>
-              {' '}
-              <button type="button" className="link" onClick={resend}>
-                Reenviar correo
-              </button>
-            </>
-          )}
-        </div>
-      )}
+      {alerts}
 
       <form className="form-grid" onSubmit={submit} noValidate>
         {mode === 'register' && <Input label="Tu nombre (opcional)" icon="user" autoComplete="name" value={name} maxLength={60} onChange={(e) => setName(e.target.value)} placeholder="Cómo quieres que te llamemos" />}
@@ -241,13 +422,7 @@ export default function AuthScreen() {
           error={errors.email}
         />
         {mode !== 'forgot' && (
-          <PasswordInput
-            label="Contraseña"
-            value={password}
-            onChange={setPassword}
-            error={errors.password}
-            autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
-          />
+          <PasswordInput label="Contraseña" value={password} onChange={setPassword} error={errors.password} autoComplete={mode === 'login' ? 'current-password' : 'new-password'} />
         )}
         {mode === 'register' && password && (
           <div className="strength" data-level={s}>
@@ -267,8 +442,8 @@ export default function AuthScreen() {
           </button>
         )}
 
-        <Button type="submit" size="lg" block loading={loading}>
-          {mode === 'login' ? 'Entrar' : mode === 'register' ? 'Crear cuenta' : 'Enviar enlace'}
+        <Button type="submit" size="lg" block loading={loading} icon={mode === 'login' ? null : 'mail'}>
+          {mode === 'login' ? 'Entrar' : 'Enviar código a mi correo'}
         </Button>
 
         {mode === 'forgot' && (
@@ -278,7 +453,7 @@ export default function AuthScreen() {
         )}
       </form>
 
-      {mode === 'register' && <p className="auth-legal">Al crear tu cuenta aceptas que tus datos se guarden de forma privada en tu cuenta.</p>}
+      {mode === 'register' && <p className="auth-legal">Tus datos se guardan de forma privada en tu cuenta.</p>}
     </AuthLayout>
   )
 }
